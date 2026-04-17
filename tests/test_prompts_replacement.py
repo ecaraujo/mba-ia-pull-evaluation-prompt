@@ -128,12 +128,10 @@ class TestPrompts:
     def test_prompt_no_todos(self):
         """Garante que nenhum campo contenha TODOs pendentes."""
         prompt_block = _load_prompt_block()
-        prompt_text = _flatten_prompt_text(prompt_block)
+        prompt_text = _flatten_prompt_text(prompt_block).upper()
 
-        assert "[TODO]" not in prompt_text.upper(), "Nao deve haver marcadores [TODO] no prompt."
-        assert re.search(r"\bTODO\b", prompt_text, flags=re.IGNORECASE) is None, (
-            "Nao deve haver TODOs pendentes no prompt."
-        )
+        assert "[TODO]" not in prompt_text, "Nao deve haver marcadores [TODO] no prompt."
+        assert "TODO" not in prompt_text, "Nao deve haver TODOs pendentes no prompt."
 
     def test_minimum_techniques(self):
         """Verifica se pelo menos 2 tecnicas foram listadas nos metadados."""

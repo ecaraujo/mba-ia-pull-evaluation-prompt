@@ -16,16 +16,13 @@ Implementado neste repositorio:
 
 - `src/pull_prompts.py` funcional para buscar `leonanluppi/bug_to_user_story_v1` e salvar em `prompts/bug_to_user_story_v1.yml`.
 - `src/push_prompts.py` funcional para ler `prompts/bug_to_user_story_v2.yml`, montar o `ChatPromptTemplate` e publicar o prompt.
-- `src/evaluate.py` agora aceita a variavel de ambiente `PROMPTS_TO_EVALUATE` para escolher quais arquivos locais em `prompts/` devem ser avaliados sem editar o arquivo.
-- `prompts/bug_to_user_story_v2.yml` criado com persona, few-shot, regras de aderencia ao dataset e casos canonicos adicionais para estabilizar a geracao.
+- `prompts/bug_to_user_story_v2.yml` criado com persona, few-shot, Chain of Thought e regras de formatacao.
 - `tests/test_prompts.py` implementado com os 6 testes exigidos.
 
-Status remoto atual:
+Pendencia atual de execucao remota:
 
-- o prompt `bug_to_user_story_v2` foi publicado no LangSmith de forma privada;
-- a avaliacao remota foi executada com sucesso;
-- todas as 5 metricas ficaram `>= 0.9`;
-- a media geral final ficou em `0.9640`.
+- O `.env` existente no workspace nao possui `LANGSMITH_API_KEY` nem `LANGSMITH_ENDPOINT`.
+- Por isso, o push real para o LangSmith e a avaliacao ponta a ponta ainda dependem da configuracao dessas credenciais.
 
 ## Tecnicas Aplicadas
 
@@ -66,8 +63,7 @@ Como foi aplicado:
 - cada exemplo possui `input` e `output`;
 - os exemplos mostram uso de Markdown;
 - os exemplos reforcam o padrao `Como ..., eu quero ..., para que ...`;
-- os exemplos mostram quando incluir secoes tecnicas adicionais;
-- o prompt tambem usa `canonical_cases` para reforcar casos avaliados com baixa aderencia.
+- os exemplos mostram quando incluir `## Contexto Tecnico` e secoes extras para casos complexos.
 
 ### 3. Chain of Thought
 
@@ -96,9 +92,6 @@ bug_to_user_story_v2:
   examples:
     - input: ...
       output: ...
-  canonical_cases:
-    - input: ...
-      output: ...
   user_prompt: "{bug_report}"
   version: "v2"
   created_at: "2026-04-15"
@@ -108,13 +101,11 @@ bug_to_user_story_v2:
 
 Contrato de saida definido no `system_prompt`:
 
-- formato padrao: User Story + `Critérios de Aceitação:`
-- secoes extras apenas quando sustentadas pelo bug:
-  - `Contexto Técnico:`
-  - `Critérios Técnicos:`
-  - `Critérios Adicionais para Admins:`
-  - `Exemplo de Cálculo:`
-  - `Contexto do Bug:`
+- `## Titulo`
+- `## User Story`
+- `## Criterios de Aceitacao`
+- `## Contexto Tecnico` quando relevante
+- secoes extras opcionais para bugs complexos
 
 Regras importantes:
 
@@ -122,6 +113,7 @@ Regras importantes:
 - User Story no formato `Como ..., eu quero ..., para que ...`;
 - criterios no formato `Dado que / Quando / Entao`;
 - sem inventar dados nao presentes no bug report;
+- sem texto antes do titulo;
 - contexto tecnico apenas quando fizer sentido.
 
 ## Comparativo v1 x v2
@@ -179,27 +171,20 @@ python -B -m pytest tests/test_prompts.py -q
 
 ### Iteracao 4: Push e avaliacao no LangSmith
 
-Depois que o `.env` passou a ter credenciais do LangSmith, o fluxo remoto foi executado em iteracoes reais.
+Esta etapa depende do preenchimento de credenciais no `.env` atual.
 
-Detalhes desta etapa:
+Bloqueio identificado:
 
-- o workspace ainda nao possui `Hub handle` publico no LangSmith, entao o `push` caiu para modo privado automaticamente;
-- a avaliacao automatica agora carrega os arquivos YAML locais do diretorio `prompts/`, o que facilita comparar `bug_to_user_story_v1.yml` e `bug_to_user_story_v2.yml` sem depender do Hub para o prompt em si;
-- o ambiente atual do projeto ja inclui os pacotes `langchain-google-genai` e `langchain-openai`, entao a avaliacao pode ser executada com o provider configurado no `.env` ou com override temporario por variavel de ambiente.
+- `LANGSMITH_API_KEY` ausente
+- `LANGSMITH_ENDPOINT` ausente
 
-Resultado da ultima avaliacao remota:
+Assim que essas variaveis forem preenchidas, o fluxo esperado e:
 
-- `Helpfulness: 0.96`
-- `Correctness: 0.97`
-- `F1-Score: 0.96`
-- `Clarity: 0.95`
-- `Precision: 0.97`
-- `Media Geral: 0.9640`
-
-Conclusao da iteracao:
-
-- o `src/evaluate.py` marcou o prompt como aprovado;
-- a regua mais rigida do PRD consolidado tambem foi atingida, porque todas as 5 metricas individuais ficaram `>= 0.9`.
+1. `python src/push_prompts.py`
+2. `python src/evaluate.py`
+3. analisar traces e metricas
+4. refinar apenas `prompts/bug_to_user_story_v2.yml`
+5. repetir ate todas as metricas ficarem `>= 0.9`
 
 ## Como Executar
 
@@ -208,15 +193,14 @@ Conclusao da iteracao:
 - Python 3.9+
 - Dependencias instaladas com `pip install -r requirements.txt`
 - Arquivo `.env` existente no projeto preenchido com:
-- `LANGSMITH_API_KEY`
-- `LANGSMITH_ENDPOINT`
-- `LANGSMITH_PROJECT`
-- `USERNAME_LANGSMITH_HUB`
-- `LLM_PROVIDER`
-- `LLM_MODEL`
-- `EVAL_MODEL`
-- `PROMPTS_TO_EVALUATE` opcional, quando quiser sobrescrever os prompts avaliados na execucao
-- `OPENAI_API_KEY` ou `GOOGLE_API_KEY`
+  - `LANGSMITH_API_KEY`
+  - `LANGSMITH_ENDPOINT`
+  - `LANGSMITH_PROJECT`
+  - `USERNAME_LANGSMITH_HUB`
+  - `LLM_PROVIDER`
+  - `LLM_MODEL`
+  - `EVAL_MODEL`
+  - `OPENAI_API_KEY` ou `GOOGLE_API_KEY`
 
 ### 1. Pull do prompt original
 
@@ -242,53 +226,6 @@ python src/push_prompts.py
 python src/evaluate.py
 ```
 
-Por padrao, o script avalia apenas `bug_to_user_story_v2.yml`.
-
-Para escolher outros prompts sem editar `src/evaluate.py`, use a variavel `PROMPTS_TO_EVALUATE`.
-O valor deve apontar para arquivos locais existentes dentro do diretorio `prompts/` do projeto.
-
-Para testar localmente `bug_to_user_story_v1.yml` e `bug_to_user_story_v2.yml` no mesmo dataset, nao e necessario fazer push do prompt antes da avaliacao. O push continua sendo util apenas para publicar ou versionar o prompt no LangSmith Hub.
-
-Valores aceitos:
-
-- um unico arquivo, como `bug_to_user_story_v2.yml`
-- um nome sem extensao, como `bug_to_user_story_v1` ou `bug_to_user_story_v2`
-- uma lista separada por virgula, como `bug_to_user_story_v1.yml,bug_to_user_story_v2.yml`
-
-Exemplos em PowerShell:
-
-```powershell
-$env:PROMPTS_TO_EVALUATE = "bug_to_user_story_v1.yml"
-python src/evaluate.py
-```
-
-```powershell
-$env:PROMPTS_TO_EVALUATE = "bug_to_user_story_v2.yml"
-python src/evaluate.py
-```
-
-```powershell
-$env:PROMPTS_TO_EVALUATE = "bug_to_user_story_v1.yml,bug_to_user_story_v2.yml"
-python src/evaluate.py
-```
-
-Se preferir deixar persistente no `.env`, adicione por exemplo:
-
-```dotenv
-PROMPTS_TO_EVALUATE=bug_to_user_story_v1.yml,bug_to_user_story_v2.yml
-```
-
-Observacao adicional:
-
-- se quiser trocar o provider apenas para uma execucao especifica, voce pode sobrescrever as variaveis de ambiente antes do comando.
-
-```powershell
-$env:LLM_PROVIDER = "openai"
-$env:LLM_MODEL = "gpt-4o-mini"
-$env:EVAL_MODEL = "gpt-4o"
-python src/evaluate.py
-```
-
 ## Resultados Finais
 
 ### Validacao local concluida
@@ -297,41 +234,40 @@ python src/evaluate.py
 - `push_prompts.validate_prompt(...)` retornando sucesso
 - `6` testes locais aprovados
 
-### Validacao remota executada
+### Validacao remota pendente
 
-Ultima medicao observada:
+No ambiente atual, os resultados finais no LangSmith ainda nao puderam ser gerados porque faltam credenciais obrigatorias no `.env`.
 
-- `Helpfulness: 0.96`
-- `Correctness: 0.97`
-- `F1-Score: 0.96`
-- `Clarity: 0.95`
-- `Precision: 0.97`
-- `Media Geral: 0.9640`
+Checklist para fechar esta etapa:
 
-Leitura correta do resultado:
-
-- pelo `src/evaluate.py`, o status atual e `aprovado`, porque a media geral ficou acima de `0.9`;
-- pelo criterio mais rigido do PRD, o status tambem esta `aprovado`, porque todas as 5 metricas individuais atingiram `0.9`.
+- publicar `bug_to_user_story_v2` no LangSmith;
+- executar `src/evaluate.py`;
+- iterar no prompt ate atingir:
+  - `Helpfulness >= 0.9`
+  - `Correctness >= 0.9`
+  - `F1-Score >= 0.9`
+  - `Clarity >= 0.9`
+  - `Precision >= 0.9`
 
 ## Evidencias no LangSmith
 
-Estado atual das evidencias:
+Preencher apos a execucao remota:
 
-- Link do projeto de avaliacao:
-  - `https://smith.langchain.com/projects/p/89d1dac4-3fdd-41fd-b74d-d4c5d221a6be`
-- Link do prompt:
-  - privado no momento, porque o workspace ainda nao possui Hub handle publico
-  - revisao avaliada: `2c43a5ff6306e52ebdc5450ad5f58259249d3810dabf5126c14bb2704b52538c`
-- Link da avaliacao final:
-  - `https://smith.langchain.com/projects/p/89d1dac4-3fdd-41fd-b74d-d4c5d221a6be`
+- Link publico do prompt otimizado:
+  - `PENDENTE`
+- Link do projeto/dataset de avaliacao:
+  - `PENDENTE`
+- Screenshot ou link da avaliacao final:
+  - `PENDENTE`
 - Tracing detalhado de pelo menos 3 exemplos:
-  - `https://smith.langchain.com/projects/p/89d1dac4-3fdd-41fd-b74d-d4c5d221a6be/r/86758a25-0259-4723-a7d5-f3371e699e09`
-  - `https://smith.langchain.com/projects/p/89d1dac4-3fdd-41fd-b74d-d4c5d221a6be/r/f6986d2a-01df-4ccb-9b12-de40d00b2915`
-  - `https://smith.langchain.com/projects/p/89d1dac4-3fdd-41fd-b74d-d4c5d221a6be/r/6e0c2eea-fb1b-41da-a467-1014d439e6af`
+  - `PENDENTE`
 
 ## Observacoes Importantes
 
 - O desafio pede iteracao apenas sobre `prompts/bug_to_user_story_v2.yml`.
-- `src/evaluate.py` agora permite escolher os prompts locais avaliados via `PROMPTS_TO_EVALUATE`, mantendo o comportamento padrao em `bug_to_user_story_v2.yml`.
-- `src/metrics.py` e `datasets/bug_to_user_story.jsonl` continuam sendo a base da avaliacao automatica.
-- O push continua privado ate que o workspace crie um Hub handle em `https://smith.langchain.com/prompts`.
+- Os arquivos protegidos foram preservados:
+  - `src/evaluate.py`
+  - `src/metrics.py`
+  - `src/utils.py`
+  - `datasets/bug_to_user_story.jsonl`
+- O fluxo atual respeita o comportamento existente de `src/evaluate.py`, sem alteracoes no avaliador.

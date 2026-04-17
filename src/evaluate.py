@@ -24,9 +24,8 @@ from typing import List, Dict, Any
 from pathlib import Path
 from dotenv import load_dotenv
 from langsmith import Client
-from langchain import hub
 from langchain_core.prompts import ChatPromptTemplate
-from utils import check_env_vars, format_score, print_section_header, get_llm as get_configured_llm
+from utils import check_env_vars, format_score, print_section_header, get_llm as get_configured_llm, load_yaml
 from metrics import evaluate_f1_score, evaluate_clarity, evaluate_precision
 
 load_dotenv()
@@ -34,6 +33,78 @@ load_dotenv()
 
 def get_llm():
     return get_configured_llm(temperature=0)
+
+
+def get_prompts_to_evaluate() -> List[str]:
+    raw_value = (os.getenv("PROMPTS_TO_EVALUATE") or "").strip()
+    if not raw_value:
+        return ["bug_to_user_story_v2.yml"]
+
+    normalized_value = raw_value.replace("\n", ",").replace(";", ",")
+    prompts = [item.strip() for item in normalized_value.split(",") if item.strip()]
+
+    if prompts:
+        return prompts
+
+    print("⚠️  PROMPTS_TO_EVALUATE está vazio após leitura. Usando padrão: bug_to_user_story_v2.yml")
+    return ["bug_to_user_story_v2.yml"]
+
+
+def _prompts_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "prompts"
+
+
+def _prompt_file_path(prompt_identifier: str) -> Path:
+    prompt_name = Path(prompt_identifier.strip()).name
+    if Path(prompt_name).suffix.lower() not in {".yml", ".yaml"}:
+        prompt_name = f"{prompt_name}.yml"
+    return _prompts_dir() / prompt_name
+
+
+def _prompt_key(prompt_identifier: str) -> str:
+    prompt_name = Path(prompt_identifier.strip()).name
+    prompt_stem = Path(prompt_name).stem if Path(prompt_name).suffix else prompt_name
+    return prompt_stem.split(":", 1)[0]
+
+
+def _get_example_input(example: dict[str, Any]) -> str:
+    if "input" in example:
+        input_value = example["input"]
+        if isinstance(input_value, dict):
+            return str(input_value.get("bug_report", "")).strip()
+        return str(input_value).strip()
+    return str(example.get("bug_report", "")).strip()
+
+
+def _get_example_output(example: dict[str, Any]) -> str:
+    if "output" in example:
+        output_value = example["output"]
+        if isinstance(output_value, dict):
+            return str(
+                output_value.get("user_story", output_value.get("reference", ""))
+            ).strip()
+        return str(output_value).strip()
+    return str(example.get("user_story", example.get("reference", ""))).strip()
+
+
+def _build_prompt_template(prompt_data: dict[str, Any]) -> ChatPromptTemplate:
+    messages: list[tuple[str, str]] = [("system", str(prompt_data["system_prompt"]).strip())]
+
+    few_shot_blocks = list(prompt_data.get("examples", [])) + list(
+        prompt_data.get("canonical_cases", [])
+    )
+
+    for example in few_shot_blocks:
+        if not isinstance(example, dict):
+            continue
+        example_input = _get_example_input(example)
+        example_output = _get_example_output(example)
+        if example_input and example_output:
+            messages.append(("human", example_input))
+            messages.append(("ai", example_output))
+
+    messages.append(("human", str(prompt_data.get("user_prompt", "{bug_report}")).strip()))
+    return ChatPromptTemplate.from_messages(messages)
 
 
 def load_dataset_from_jsonl(jsonl_path: str) -> List[Dict[str, Any]]:
@@ -102,39 +173,35 @@ def create_evaluation_dataset(client: Client, dataset_name: str, jsonl_path: str
         return dataset_name
 
 
-def pull_prompt_from_langsmith(prompt_name: str) -> ChatPromptTemplate:
+def load_prompt_from_local_file(prompt_identifier: str) -> ChatPromptTemplate:
+    prompt_path = _prompt_file_path(prompt_identifier)
+    prompt_key = _prompt_key(prompt_identifier)
+
     try:
-        print(f"   Puxando prompt do LangSmith Hub: {prompt_name}")
-        prompt = hub.pull(prompt_name)
+        print(f"   Carregando prompt local: {prompt_path}")
+        prompt_file = load_yaml(str(prompt_path))
+        if prompt_file is None:
+            raise FileNotFoundError(f"Arquivo de prompt não encontrado ou inválido: {prompt_path}")
+
+        prompt_data = prompt_file.get(prompt_key)
+        if not isinstance(prompt_data, dict):
+            raise ValueError(
+                f"O arquivo {prompt_path} deve conter o bloco raiz '{prompt_key}'."
+            )
+
+        prompt = _build_prompt_template(prompt_data)
         print(f"   ✓ Prompt carregado com sucesso")
         return prompt
 
     except Exception as e:
-        error_msg = str(e).lower()
-
         print(f"\n{'=' * 70}")
-        print(f"❌ ERRO: Não foi possível carregar o prompt '{prompt_name}'")
+        print(f"❌ ERRO: Não foi possível carregar o prompt local '{prompt_identifier}'")
         print(f"{'=' * 70}\n")
-
-        if "not found" in error_msg or "404" in error_msg:
-            print("⚠️  O prompt não foi encontrado no LangSmith Hub.\n")
-            print("AÇÕES NECESSÁRIAS:")
-            print("1. Verifique se você já fez push do prompt otimizado:")
-            print(f"   python src/push_prompts.py")
-            print()
-            print("2. Confirme se o prompt foi publicado com sucesso em:")
-            print(f"   https://smith.langchain.com/prompts")
-            print()
-            print(f"3. Certifique-se de que o nome do prompt está correto: '{prompt_name}'")
-            print()
-            print("4. Se você alterou o prompt no YAML, refaça o push:")
-            print(f"   python src/push_prompts.py")
-        else:
-            print(f"Erro técnico: {e}\n")
-            print("Verifique:")
-            print("- LANGSMITH_API_KEY está configurada corretamente no .env")
-            print("- Você tem acesso ao workspace do LangSmith")
-            print("- Sua conexão com a internet está funcionando")
+        print(f"Erro técnico: {e}\n")
+        print("Verifique:")
+        print(f"- Se o arquivo existe em: {_prompts_dir()}")
+        print("- Se PROMPTS_TO_EVALUATE aponta para um arquivo .yml válido")
+        print(f"- Se o YAML contém o bloco raiz esperado para '{prompt_key}'")
 
         print(f"\n{'=' * 70}\n")
         raise
@@ -179,14 +246,15 @@ def evaluate_prompt_on_example(
 
 
 def evaluate_prompt(
-    prompt_name: str,
+    prompt_identifier: str,
     dataset_name: str,
     client: Client
 ) -> Dict[str, float]:
-    print(f"\n🔍 Avaliando: {prompt_name}")
+    prompt_label = _prompt_file_path(prompt_identifier).name
+    print(f"\n🔍 Avaliando: {prompt_label}")
 
     try:
-        prompt_template = pull_prompt_from_langsmith(prompt_name)
+        prompt_template = load_prompt_from_local_file(prompt_identifier)
 
         examples = list(client.list_examples(dataset_name=dataset_name))
         print(f"   Dataset: {len(examples)} exemplos")
@@ -306,13 +374,15 @@ def main():
     print("\n" + "=" * 70)
     print("PROMPTS PARA AVALIAR")
     print("=" * 70)
-    print("\nEste script irá puxar prompts do LangSmith Hub.")
-    print("Certifique-se de ter feito push dos prompts antes de avaliar:")
-    print("  python src/push_prompts.py\n")
+    print("\nEste script irá carregar prompts locais do diretório prompts/.")
+    print("Use PROMPTS_TO_EVALUATE para escolher arquivos .yml específicos.\n")
 
-    prompts_to_evaluate = [
-        "bug_to_user_story_v2",
-    ]
+    prompts_to_evaluate = get_prompts_to_evaluate()
+
+    print("Prompts configurados para esta execução:")
+    for prompt_name in prompts_to_evaluate:
+        print(f"  - {_prompt_file_path(prompt_name).name}")
+    print()
 
     all_passed = True
     evaluated_count = 0
@@ -320,25 +390,26 @@ def main():
 
     for prompt_name in prompts_to_evaluate:
         evaluated_count += 1
+        prompt_label = _prompt_file_path(prompt_name).name
 
         try:
             scores = evaluate_prompt(prompt_name, dataset_name, client)
 
-            passed = display_results(prompt_name, scores)
+            passed = display_results(prompt_label, scores)
             all_passed = all_passed and passed
 
             results_summary.append({
-                "prompt": prompt_name,
+                "prompt": prompt_label,
                 "scores": scores,
                 "passed": passed
             })
 
         except Exception as e:
-            print(f"\n❌ Falha ao avaliar '{prompt_name}': {e}")
+            print(f"\n❌ Falha ao avaliar '{prompt_label}': {e}")
             all_passed = False
 
             results_summary.append({
-                "prompt": prompt_name,
+                "prompt": prompt_label,
                 "scores": {
                     "helpfulness": 0.0,
                     "correctness": 0.0,

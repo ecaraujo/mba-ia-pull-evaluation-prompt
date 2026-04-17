@@ -3,13 +3,28 @@ Funções auxiliares para o projeto de otimização de prompts.
 """
 
 import os
+import sys
 import yaml
 import json
 from typing import Dict, Any, Optional
 from pathlib import Path
 from dotenv import load_dotenv
 
+
+def _configure_console_output() -> None:
+    """Avoid Windows console crashes when scripts print Unicode status symbols."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            continue
+
+
 load_dotenv()
+_configure_console_output()
 
 
 def load_yaml(file_path: str) -> Optional[Dict[str, Any]]:
@@ -191,7 +206,13 @@ def get_llm(model: Optional[str] = None, temperature: float = 0.0):
     model_name = model or os.getenv('LLM_MODEL', 'gpt-4o-mini')
 
     if provider == 'openai':
-        from langchain_openai import ChatOpenAI
+        try:
+            from langchain_openai import ChatOpenAI
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                "Pacote opcional ausente para provider OpenAI.\n"
+                "Instale com: python -m pip install langchain-openai"
+            ) from exc
 
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
@@ -207,7 +228,13 @@ def get_llm(model: Optional[str] = None, temperature: float = 0.0):
         )
 
     elif provider == 'google':
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                "Pacote opcional ausente para provider Google.\n"
+                "Instale com: python -m pip install langchain-google-genai"
+            ) from exc
 
         api_key = os.getenv('GOOGLE_API_KEY')
         if not api_key:
