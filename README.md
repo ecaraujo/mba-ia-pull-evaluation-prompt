@@ -207,16 +207,55 @@ Conclusao da iteracao:
 
 - Python 3.9+
 - Dependencias instaladas com `pip install -r requirements.txt`
-- Arquivo `.env` existente no projeto preenchido com:
-- `LANGSMITH_API_KEY`
-- `LANGSMITH_ENDPOINT`
-- `LANGSMITH_PROJECT`
-- `USERNAME_LANGSMITH_HUB`
-- `LLM_PROVIDER`
-- `LLM_MODEL`
-- `EVAL_MODEL`
-- `PROMPTS_TO_EVALUATE` opcional, quando quiser sobrescrever os prompts avaliados na execucao
-- `OPENAI_API_KEY` ou `GOOGLE_API_KEY`
+- Arquivo `.env` existente no projeto com as variaveis descritas abaixo
+
+### Variaveis de Ambiente
+
+Exemplo de `.env` para este projeto:
+
+```dotenv
+LANGSMITH_API_KEY=lsv2_pt_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=FULLCYCLEAPP
+LANGCHAIN_PROJECT=FULLCYCLEAPP
+USERNAME_LANGSMITH_HUB=FULLCYCLEAPP
+
+LLM_PROVIDER=google
+LLM_MODEL=gemini-2.5-flash
+EVAL_MODEL=gemini-2.5-flash
+GOOGLE_API_KEY=your_google_api_key
+
+# Alternativa se quiser usar OpenAI na avaliacao:
+# LLM_PROVIDER=openai
+# LLM_MODEL=gpt-4o-mini
+# EVAL_MODEL=gpt-4o
+# OPENAI_API_KEY=your_openai_api_key
+
+# Opcional para escolher os YAMLs locais avaliados:
+PROMPTS_TO_EVALUATE=bug_to_user_story_v2.yml
+
+# Opcionais para os scripts de pull/push:
+# PROMPT_NAME=bug_to_user_story_v2
+# PROMPT_VERSION=
+# PROMPT_OUT=prompts/bug_to_user_story_v1.yml
+```
+
+Descricao das variaveis:
+
+- `LANGSMITH_API_KEY`: obrigatoria para `src/pull_prompts.py`, `src/push_prompts.py` e `src/evaluate.py`.
+- `LANGSMITH_ENDPOINT`: recomendada. Para a nuvem publica do LangSmith, use `https://api.smith.langchain.com`.
+- `LANGSMITH_PROJECT`: recomendada para os scripts de pull e push.
+- `LANGCHAIN_PROJECT`: recomendada para `src/evaluate.py`. Neste projeto, vale a pena usar o mesmo valor de `LANGSMITH_PROJECT`, por exemplo `FULLCYCLEAPP`.
+- `USERNAME_LANGSMITH_HUB`: necessaria para publicar o prompt com namespace publico, por exemplo `FULLCYCLEAPP/bug_to_user_story_v2`.
+- `LLM_PROVIDER`: obrigatoria para a avaliacao. Valores suportados no projeto: `google` ou `openai`.
+- `LLM_MODEL`: obrigatoria para a resposta principal gerada durante a avaliacao.
+- `EVAL_MODEL`: obrigatoria para os julgamentos das metricas.
+- `GOOGLE_API_KEY`: obrigatoria quando `LLM_PROVIDER=google`.
+- `OPENAI_API_KEY`: obrigatoria quando `LLM_PROVIDER=openai`.
+- `PROMPTS_TO_EVALUATE`: opcional. Escolhe quais arquivos locais em `prompts/` serao avaliados.
+- `PROMPT_NAME`: opcional. Sobrescreve o prompt usado em `src/pull_prompts.py` e `src/push_prompts.py`.
+- `PROMPT_VERSION`: opcional. Usada em `src/pull_prompts.py` para buscar uma revisao especifica do prompt no LangSmith.
+- `PROMPT_OUT`: opcional. Usada em `src/pull_prompts.py` para salvar o pull em outro caminho de saida.
 
 ### 1. Pull do prompt original
 
@@ -235,6 +274,21 @@ python -m pytest tests/test_prompts.py
 ```bash
 python src/push_prompts.py
 ```
+
+Se `USERNAME_LANGSMITH_HUB=FULLCYCLEAPP` estiver definido no `.env`, o script tentara publicar o prompt v2 no namespace publico `FULLCYCLEAPP/bug_to_user_story_v2`.
+
+Exemplo em PowerShell:
+
+```powershell
+$env:USERNAME_LANGSMITH_HUB = "FULLCYCLEAPP"
+$env:PROMPT_NAME = "bug_to_user_story_v2"
+python src/push_prompts.py
+```
+
+Observacao:
+
+- para esse nome ficar realmente publico no Prompt Hub, o workspace precisa ter o Hub handle `FULLCYCLEAPP` configurado em `https://smith.langchain.com/prompts`;
+- se o handle publico ainda nao existir, o script fara fallback para push privado no workspace e avisara isso no terminal.
 
 ### 4. Avaliacao automatica
 

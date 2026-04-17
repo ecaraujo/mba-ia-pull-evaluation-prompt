@@ -38,6 +38,18 @@ def _prompt_key(prompt_name: str) -> str:
     return prompt_ref.rsplit("/", 1)[-1]
 
 
+def _public_prompt_identifier(prompt_name: str) -> str:
+    prompt_ref = prompt_name.split(":", 1)[0].strip()
+    if "/" in prompt_ref:
+        return prompt_ref
+
+    hub_handle = (os.getenv("USERNAME_LANGSMITH_HUB") or "").strip().strip("/")
+    if hub_handle:
+        return f"{hub_handle}/{_prompt_key(prompt_name)}"
+
+    return _prompt_key(prompt_name)
+
+
 def _prompt_file_path(root: Path, prompt_name: str) -> Path:
     return root / "prompts" / f"{_prompt_key(prompt_name)}.yml"
 
@@ -138,6 +150,8 @@ def push_prompt_to_langsmith(prompt_name: str, prompt_data: dict[str, Any]) -> b
         _slugify_tag(item) for item in techniques
     ]
     commit_tags = [tag for tag in commit_tags if tag]
+    public_prompt_identifier = _public_prompt_identifier(prompt_name)
+    private_prompt_identifier = _prompt_key(prompt_name)
 
     client = Client(api_url=endpoint or None, api_key=api_key)
     push_kwargs = {
@@ -148,32 +162,67 @@ def push_prompt_to_langsmith(prompt_name: str, prompt_data: dict[str, Any]) -> b
         "commit_tags": commit_tags,
     }
 
-    def _push(*, is_public: bool, with_commit_tags: bool):
+    def _push(prompt_identifier: str, *, is_public: bool, with_commit_tags: bool):
         kwargs = dict(push_kwargs)
         if with_commit_tags:
             kwargs["commit_tags"] = commit_tags
         return client.push_prompt(
-            prompt_name,
+            prompt_identifier,
             is_public=is_public,
             **kwargs,
         )
 
+    def _is_commit_tag_conflict(error_text: str) -> bool:
+        return "already exists on commit" in error_text
+
+    def _is_nothing_to_commit(error_text: str) -> bool:
+        normalized = error_text.lower()
+        return (
+            "nothing to commit" in normalized
+            or "prompt has not changed since latest commit" in normalized
+        )
+
     try:
-        prompt_url = _push(is_public=True, with_commit_tags=True)
+        print(f"Tentando publicar no Prompt Hub como: {public_prompt_identifier}")
+        prompt_url = _push(
+            public_prompt_identifier,
+            is_public=True,
+            with_commit_tags=True,
+        )
         print(f"Prompt publicado com sucesso: {prompt_url}")
         return True
     except Exception as exc:
         error_text = str(exc)
         if "Cannot create a public prompt without first" not in error_text:
-            if "already exists on commit" not in error_text:
+            if _is_nothing_to_commit(error_text):
+                print(
+                    "Prompt ja estava publicado e sem alteracoes desde o ultimo commit. "
+                    "Nenhum novo commit foi criado."
+                )
+                return True
+
+            if not _is_commit_tag_conflict(error_text):
                 raise
 
             print(
                 "Aviso: conflito de tags de commit detectado no LangSmith. "
                 "Repetindo o push sem commit_tags para registrar a nova iteracao."
             )
-            prompt_url = _push(is_public=True, with_commit_tags=False)
-            print(f"Prompt publicado com sucesso: {prompt_url}")
+            try:
+                prompt_url = _push(
+                    public_prompt_identifier,
+                    is_public=True,
+                    with_commit_tags=False,
+                )
+                print(f"Prompt publicado com sucesso: {prompt_url}")
+            except Exception as retry_exc:
+                retry_error_text = str(retry_exc)
+                if not _is_nothing_to_commit(retry_error_text):
+                    raise
+                print(
+                    "Prompt ja estava publicado e sem alteracoes desde o ultimo commit. "
+                    "Nenhum novo commit foi criado."
+                )
             return True
 
         print(
@@ -181,16 +230,50 @@ def push_prompt_to_langsmith(prompt_name: str, prompt_data: dict[str, Any]) -> b
             "Fazendo push privado para permitir a avaliacao local/remota."
         )
         try:
-            prompt_url = _push(is_public=False, with_commit_tags=True)
+            prompt_url = _push(
+                private_prompt_identifier,
+                is_public=False,
+                with_commit_tags=True,
+            )
         except Exception as private_exc:
-            if "already exists on commit" not in str(private_exc):
+            private_error_text = str(private_exc)
+            if _is_nothing_to_commit(private_error_text):
+                print(
+                    "Prompt ja estava publicado de forma privada e sem alteracoes "
+                    "desde o ultimo commit."
+                )
+                print(
+                    "Para deixa-lo publico depois, crie um Hub handle em "
+                    "https://smith.langchain.com/prompts e execute o push novamente."
+                )
+                return True
+
+            if not _is_commit_tag_conflict(private_error_text):
                 raise
 
             print(
                 "Aviso: conflito de tags de commit detectado no push privado. "
                 "Repetindo sem commit_tags."
             )
-            prompt_url = _push(is_public=False, with_commit_tags=False)
+            try:
+                prompt_url = _push(
+                    private_prompt_identifier,
+                    is_public=False,
+                    with_commit_tags=False,
+                )
+            except Exception as private_retry_exc:
+                private_retry_error_text = str(private_retry_exc)
+                if not _is_nothing_to_commit(private_retry_error_text):
+                    raise
+                print(
+                    "Prompt ja estava publicado de forma privada e sem alteracoes "
+                    "desde o ultimo commit."
+                )
+                print(
+                    "Para deixa-lo publico depois, crie um Hub handle em "
+                    "https://smith.langchain.com/prompts e execute o push novamente."
+                )
+                return True
         print(f"Prompt publicado de forma privada: {prompt_url}")
         print(
             "Para deixar o prompt publico depois, crie um Hub handle em "
